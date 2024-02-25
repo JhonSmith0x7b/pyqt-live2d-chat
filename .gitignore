@@ -12,3 +12,5 @@ live2d/Samples/Resources/*
 *.log
 *.spec
 *.swp
+temp.wav
+temp.wav.txt

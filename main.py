@@ -20,6 +20,11 @@ import ttss
 import requests
 import json
 import time
+import asrs
+import sounddevice as sd
+import numpy as np
+from scipy.signal import resample
+import soundfile as sf
 
 
 def set_layout_visibility(layout: QLayout, visible: bool) -> None:
@@ -84,7 +89,20 @@ class SettingsWindow(QWidget):
         # local live2d 
         self.local_live2d_checkbox = QCheckBox("Enable Local Live2D")
         if os.environ.get("ENABLE_LOCAL_LIVE2D") == 'true': self.local_live2d_checkbox.setChecked(True)
-        self.layout.addWidget(self.local_live2d_checkbox)
+        # asr
+        self.asr_layout = QGridLayout()
+        self.layout.addLayout(self.asr_layout)
+        self.asr_checkbox = QCheckBox("Enable ASR")
+        if os.environ.get("ENABLE_ASR") == 'true': self.asr_checkbox.setChecked(True)
+        asr_row = common.IterCount(0)
+        self.asr_layout.addWidget(self.asr_checkbox, asr_row.val, 0, 1, 1)
+        whisper_radio_button = QRadioButton("WHISPER_CPP")
+        self.asr_layout.addWidget(whisper_radio_button, next(asr_row), 0, 1, 1)
+        if os.environ.get("ASR_TYPE") == "WHISPER_CPP":
+            whisper_radio_button.setChecked(True)
+        self.asr_radio_group = QButtonGroup()
+        self.asr_radio_group.addButton(whisper_radio_button)
+        
         # jump button
         start_button = QPushButton("Start")
         start_button.setFixedSize(880, 100)
@@ -101,6 +119,8 @@ class SettingsWindow(QWidget):
         os.environ["TTS_TYPE"] = str(self.tts_radio_group.checkedButton().text())
         os.environ["ENABLE_BILI"] = str(self.bili_checkbox.isChecked()).lower()
         os.environ["ENABLE_LOCAL_LIVE2D"] = str(self.local_live2d_checkbox.isChecked()).lower()
+        os.environ["ENABLE_ASR"] = str(self.asr_checkbox.isChecked()).lower()
+        os.environ["ASR_TYPE"] = str(self.asr_radio_group.checkedButton().text())
         self.hide()
         self.next_window = MainWindow()
         self.next_window.show()
@@ -182,6 +202,21 @@ class MainWindow(QWidget):
             # 连接信号
             self.submit_button.clicked.connect(self.on_submit_pressed)
             self.input_box.returnPressed.connect(self.on_submit_pressed)
+        # ASR 
+        self.asr_enable = True if os.environ.get("ENABLE_ASR") == 'true' else False
+        if self.asr_enable:
+            self.asr_q = queue.Queue()
+            self.asr_enable = True
+            self.asr_layout = QVBoxLayout()
+            self.layout.addLayout(self.asr_layout, 0, 2, 1, 1)
+            self.asr_button = QPushButton("ASR")
+            self.asr_button.setFixedSize(200, 750)
+            self.asr_layout.addWidget(self.asr_button)
+            self.asr_button.clicked.connect(self.on_asr_button_pressed)
+            self.asr_thread = AsrThread(self.asr_q)
+            self.asr_thread.start()
+            self.asr_thread.signal.sig.connect(self.asr_callback)
+            self.recording = False
 
     def on_submit_pressed(self) -> None:
         # 获取输入文本
@@ -198,6 +233,17 @@ class MainWindow(QWidget):
         self.submit_button.setEnabled(False)
         # send 2 llm
         self.back_q.put(text)
+
+    def on_asr_button_pressed(self) -> None:
+        # self.asr_button.setEnabled(False)
+        if not self.recording:
+            self.asr_button.setText("Listening")
+            self.asr_q.put("start")
+            self.recording = True
+        else:
+            self.asr_button.setText("ASR")
+            self.asr_q.put("end")
+            self.recording = False
     
     def list_widget_add_item(self, text: str, align: Qt.AlignmentFlag=Qt.AlignmentFlag.AlignLeft) -> None:
         item = QListWidgetItem(self.list_widget)
@@ -223,6 +269,12 @@ class MainWindow(QWidget):
                 self.list_widget_add_item(text)
                 self.list_widget.scrollToBottom()
             self.text_edit.setHtml(text[:120])
+    
+    def asr_callback(self, text: str) -> None:
+        if text not in (None, ""):
+            self.back_q.put(text)
+        self.asr_button.setEnabled(True)
+        self.asr_button.setText("ASR")
     
     def on_ready_read_standard_output(self) -> None:
         data = self.live2d_process.readAllStandardOutput()
@@ -294,7 +346,7 @@ def llm_clo() -> str:
                 continue
             if done.result() is not None:
                 return done.result()
-        return None
+        return "没有返回, 再试一次吧~"
     return llm_inner
 
 
@@ -311,6 +363,7 @@ class BackThead(QThread):
         self.tts_enable =  True if os.environ.get("ENABLE_TTS") == 'true' else False
         self.llm_enable =  True if os.environ.get("ENABLE_LLM") == 'true' else False
         self.bili_enable =  True if os.environ.get("ENABLE_BILI") == 'true' else False
+        self.asr_enable = True if os.environ.get("ENABLE_ASR") == 'true' else False
         if self.llm_enable:
             self.llm = llm_clo()
         if self.tts_enable:
@@ -340,7 +393,7 @@ class BackThead(QThread):
         tts_task = None
         llm_task = None
         re = None
-        if self.tts_enable:
+        if self.tts_enable and not self.asr_enable:
             tts_task = asyncio.ensure_future(self.tts(text[:300]))
             tasks.append(tts_task)
         if self.llm_enable:
@@ -442,7 +495,47 @@ class BiliThread(QThread):
                 traceback.print_exc()
                 logging.error(f"loop bullet error {e}")
     
-    # close
+    # close 
+    def terminate(self) -> None:
+        super().terminate()
+        self.wait()
+
+
+class AsrSignal(QObject):
+    sig = Signal(str)
+
+
+class AsrThread(QThread):
+    def __init__(self, q: queue.Queue ,parent=None) -> None:
+        super().__init__(parent)
+        self.signal = AsrSignal()
+        self.q = q
+        self.asr_type = os.environ.get("ASR_TYPE")
+        self.fs = 44100
+        self.channels = 1
+        if self.asr_type == "WHISPER_CPP":
+            self.asr = asrs.whisper_cpp_clo()
+    
+    def run(self) -> None:
+        while True:
+            try:
+                re = self.q.get()
+                if re == "start":
+                    re_audio_data = []
+                    with sd.InputStream(samplerate=self.fs, 
+                                        channels=self.channels, 
+                                        callback=lambda *args: re_audio_data.append(args[0].copy())) as stream:
+                        while self.q.get() == "end":
+                            break
+                    myrecording = np.concatenate(re_audio_data)
+                    resampled = resample(myrecording, int(len(myrecording) * 16000 / self.fs))
+                    sf.write('temp.wav', resampled, 16000, subtype='PCM_16')
+                    self.signal.sig.emit(self.asr())
+            except Exception as e:
+                traceback.print_exc()
+                logging.error(f"asr error {e}")
+    
+    # close 
     def terminate(self) -> None:
         super().terminate()
         self.wait()

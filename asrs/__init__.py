@@ -1,0 +1,1 @@
+from .whisper_cpp import whisper_cpp_clo

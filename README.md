@@ -27,9 +27,8 @@
 * Node
 
 ### 3.3 本地运行
-1. 克隆项目到本地：`git@github.com:JhonSmith0x7b/pyqt-live2d-chat.git`
+1. 克隆项目到本地：`git clone git@github.com:JhonSmith0x7b/pyqt-live2d-chat.git -recurse`
 2. 进入项目目录：`cd pyqt-live2d-chat`
-3. 初始化子模块: `git submodule update --init`
 3. 安装依赖：`pip install -r requirements.txt`
 4. 运行应用：`python main.py`
 5. 如果使用本地live2d, 需要运行 `cd ./live2d/Samples/TypeScript/Demo/ && npm run build && npm run serve`
