@@ -21,10 +21,8 @@ import requests
 import json
 import time
 import asrs
-import sounddevice as sd
 import numpy as np
 from scipy.signal import resample
-import soundfile as sf
 
 
 def set_layout_visibility(layout: QLayout, visible: bool) -> None:
@@ -102,7 +100,10 @@ class SettingsWindow(QWidget):
             whisper_radio_button.setChecked(True)
         self.asr_radio_group = QButtonGroup()
         self.asr_radio_group.addButton(whisper_radio_button)
-        
+        # enable windowless
+        self.windowless_checkbox = QCheckBox("Enable Windowless")
+        self.layout.addWidget(self.windowless_checkbox)
+        if os.environ.get("ENABLE_WINDOWLESS") == 'true': self.windowless_checkbox.setChecked(True)
         # jump button
         start_button = QPushButton("Start")
         start_button.setFixedSize(880, 100)
@@ -121,6 +122,7 @@ class SettingsWindow(QWidget):
         os.environ["ENABLE_LOCAL_LIVE2D"] = str(self.local_live2d_checkbox.isChecked()).lower()
         os.environ["ENABLE_ASR"] = str(self.asr_checkbox.isChecked()).lower()
         os.environ["ASR_TYPE"] = str(self.asr_radio_group.checkedButton().text())
+        os.environ["ENABLE_WINDOWLESS"] = str(self.windowless_checkbox.isChecked()).lower()
         self.hide()
         self.next_window = MainWindow()
         self.next_window.show()
@@ -136,12 +138,14 @@ class MainWindow(QWidget):
         super().__init__()
         self.setWindowTitle("Main Window")
         self.resize(500, 800)
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setWindowFlags(
-            # Qt.WindowType.WindowStaysOnTopHint
-            Qt.WindowType.FramelessWindowHint 
-            # Qt.WindowType.WindowTransparentForInput
-        )
+        self.enable_windowless = True if os.environ.get("ENABLE_WINDOWLESS") == 'true' else False
+        if self.enable_windowless:
+            self.setAttribute(Qt.WA_TranslucentBackground)
+            self.setWindowFlags(
+                # Qt.WindowType.WindowStaysOnTopHint
+                Qt.WindowType.FramelessWindowHint 
+                # Qt.WindowType.WindowTransparentForInput
+            )
         # layout setting
         self.layout = QGridLayout(self)
         self.layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
