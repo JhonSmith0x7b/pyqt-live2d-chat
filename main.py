@@ -130,7 +130,7 @@ class SettingsWindow(QWidget):
     
     # close
     def closeEvent(self, event: QCloseEvent) -> None:
-        super().closeEvent(event)
+        pass
 
 
 class MainWindow(QWidget):
@@ -183,7 +183,7 @@ class MainWindow(QWidget):
         self.live2d_layout.addWidget(self.text_edit)
         self.live2d_layout.addWidget(self.web_window)
         self.back_q = queue.Queue()
-        self.back_thread = BackThead(self.back_q)
+        self.back_thread = BackThead(self.back_q, parent=self)
         self.back_thread.start()
         self.back_thread.signal.sig.connect(self.back_callback)
         # chat box 
@@ -217,7 +217,7 @@ class MainWindow(QWidget):
             self.asr_button.setFixedSize(200, 750)
             self.asr_layout.addWidget(self.asr_button)
             self.asr_button.clicked.connect(self.on_asr_button_pressed)
-            self.asr_thread = AsrThread(self.asr_q)
+            self.asr_thread = AsrThread(self.asr_q, parent=self)
             self.asr_thread.start()
             self.asr_thread.signal.sig.connect(self.asr_callback)
             self.recording = False
@@ -295,7 +295,9 @@ class MainWindow(QWidget):
             self.live2d_process.close()
             self.live2d_process.kill()
             self.live2d_process.waitForFinished()
-        self.back_thread.terminate()
+        if self.asr_enable:
+            self.asr_thread.quit()
+        self.back_thread.quit()
         super().closeEvent(event)
 
 
@@ -377,16 +379,16 @@ class BackThead(QThread):
             elif tts_type == "AZURE":
                 self.tts = ttss.azure_tts_clo()
             self.audio_queue = queue.Queue()
-            self.audio_thread = AudioThread(self.audio_queue)
+            self.audio_thread = AudioThread(self.audio_queue, parent=self)
             self.audio_thread.start()
         if self.bili_enable:
-            self.bili_thread = BiliThread(self.q)
+            self.bili_thread = BiliThread(self.q, parent=self)
             self.bili_thread.start()
         
     def run(self) -> None:
         while True:
-            temp = self.q.get()
             try:
+                temp = self.q.get()
                 self.loop.run_until_complete(self.task_run(temp))
             except Exception as e: 
                 traceback.print_exc()
@@ -419,11 +421,12 @@ class BackThead(QThread):
                 re = llm_task.result()
         self.signal.sig.emit(re)
     
-    # close 
-    def terminate(self) -> None:
-        if self.tts_enable: self.audio_thread.terminate()
-        if self.bili_enable: self.bili_thread.terminate()
-        super().terminate()
+    def quit(self) -> None:
+        if self.tts_enable: self.audio_thread.quit()
+        if self.bili_enable: self.bili_thread.quit()
+        super().quit()
+        self.terminate()
+        self.wait()
 
 
 class AudioSignal(QObject):
@@ -441,8 +444,8 @@ class AudioThread(QThread):
     
     def run(self) -> None:
         while True:
-            audio = self.q.get()
             try:
+                audio = self.q.get()
                 temp_audio = io.BytesIO(audio)
                 data, rate = sf.read(temp_audio)
                 data = data * self.volume
@@ -451,9 +454,9 @@ class AudioThread(QThread):
                 traceback.print_exc()
                 logging.error(f"play audio error {e}")
     
-    # close
-    def terminate(self) -> None:
-        super().terminate()
+    def quit(self) -> None:
+        super().quit()
+        self.terminate()
         self.wait()
 
 
@@ -499,9 +502,9 @@ class BiliThread(QThread):
                 traceback.print_exc()
                 logging.error(f"loop bullet error {e}")
     
-    # close 
-    def terminate(self) -> None:
-        super().terminate()
+    def quit(self) -> None:
+        super().quit()
+        self.terminate()
         self.wait()
 
 
@@ -539,9 +542,9 @@ class AsrThread(QThread):
                 traceback.print_exc()
                 logging.error(f"asr error {e}")
     
-    # close 
-    def terminate(self) -> None:
-        super().terminate()
+    def quit(self) -> None:
+        super().quit()
+        self.terminate()
         self.wait()
 
 
@@ -549,7 +552,7 @@ def main() -> None:
     app = QApplication(sys.argv)
     window = SettingsWindow()
     window.show()
-    app.exec()
+    sys.exit(app.exec())
 
 
 def test(*args, **kwargs) -> None:
